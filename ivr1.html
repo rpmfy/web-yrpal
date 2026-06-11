@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Twilio CRM Softphone</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2.18.3/dist/twilio.min.js"></script>
+
+<style>
+body{
+    font-family:Arial,sans-serif;
+    background:#f5f6fa;
+    margin:0;
+    padding:20px;
+}
+
+.container{
+    max-width:700px;
+    margin:auto;
+}
+
+.card{
+    background:#fff;
+    padding:20px;
+    border-radius:10px;
+    box-shadow:0 2px 10px rgba(0,0,0,.1);
+}
+
+h2{
+    margin-top:0;
+}
+
+.row{
+    margin-bottom:12px;
+}
+
+label{
+    display:block;
+    margin-bottom:5px;
+    font-weight:bold;
+}
+
+input,select{
+    width:100%;
+    padding:10px;
+    box-sizing:border-box;
+}
+
+button{
+    padding:10px 15px;
+    border:none;
+    cursor:pointer;
+    margin-right:10px;
+    border-radius:5px;
+}
+
+.call-btn{
+    background:#28a745;
+    color:white;
+}
+
+.hangup-btn{
+    background:#dc3545;
+    color:white;
+}
+
+.answer-btn{
+    background:#007bff;
+    color:white;
+}
+
+.reject-btn{
+    background:#6c757d;
+    color:white;
+}
+
+.status{
+    padding:10px;
+    margin-bottom:15px;
+    border-radius:5px;
+    background:#eee;
+}
+
+.logs{
+    background:#111;
+    color:#0f0;
+    height:250px;
+    overflow:auto;
+    padding:10px;
+    font-size:12px;
+    margin-top:15px;
+    white-space:pre-wrap;
+}
+
+.incoming{
+    display:none;
+    background:#fff3cd;
+    padding:10px;
+    border-radius:5px;
+    margin-top:15px;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<div class="card">
+
+<h2>Twilio CRM Softphone</h2>
+
+<div id="status" class="status">
+Initializing...
+</div>
+
+<div class="row">
+<label>Microphone</label>
+<select id="micSelect"></select>
+</div>
+
+<div class="row">
+<label>Phone Number</label>
+<input id="phoneNumber" placeholder="+919784438550">
+</div>
+
+<div class="row">
+<button class="call-btn" onclick="makeCall()">
+Call
+</button>
+
+<button class="hangup-btn" onclick="hangupCall()">
+Hangup
+</button>
+</div>
+
+<div id="incomingBox" class="incoming">
+
+<h3>Incoming Call</h3>
+
+<p>
+From:
+<span id="incomingNumber"></span>
+</p>
+
+<button class="answer-btn" onclick="acceptCall()">
+Answer
+</button>
+
+<button class="reject-btn" onclick="rejectCall()">
+Reject
+</button>
+
+</div>
+
+<div id="logs" class="logs"></div>
+
+</div>
+</div>
+
+<script>
+
+const TOKEN_URL = "https://api.dev.rpmfy.com/crm-service/api/twilio/token";
+
+let device = null;
+let activeCall = null;
+
+function log(message,data){
+
+    const logs =
+        document.getElementById("logs");
+
+    const line =
+        document.createElement("div");
+
+    line.textContent =
+        new Date().toLocaleTimeString() +
+        " : " +
+        message +
+        (data ? " " + JSON.stringify(data) : "");
+
+    logs.appendChild(line);
+
+    logs.scrollTop =
+        logs.scrollHeight;
+
+    console.log(message,data || "");
+}
+
+function setStatus(text){
+
+    document.getElementById("status")
+        .innerText = text;
+}
+
+async function loadDevices(){
+
+    const devices =
+        await navigator.mediaDevices
+            .enumerateDevices();
+
+    const micSelect =
+        document.getElementById("micSelect");
+
+    micSelect.innerHTML = "";
+
+    devices.forEach(device => {
+
+        if(device.kind === "audioinput"){
+
+            const option =
+                document.createElement("option");
+
+            option.value =
+                device.deviceId;
+
+            option.text =
+                device.label ||
+                "Microphone";
+
+            micSelect.appendChild(option);
+        }
+    });
+
+    log("Audio Devices",devices);
+}
+
+async function initialize(){
+
+    try{
+
+        setStatus(
+            "Requesting microphone permission..."
+        );
+
+        await navigator.mediaDevices
+            .getUserMedia({
+                audio:true
+            });
+
+        log(
+            "Microphone permission granted"
+        );
+
+        await loadDevices();
+
+        setStatus(
+            "Fetching Twilio Token..."
+        );
+
+        const response =
+            await fetch(TOKEN_URL);
+
+        const data =
+            await response.json();
+
+        device =
+            new Twilio.Device(
+                data.token,
+                {
+                    logLevel:1,
+                    codecPreferences:[
+                        "pcmu"
+                    ]
+                }
+            );
+
+        device.on(
+            "registered",
+            () => {
+
+                setStatus("Ready");
+
+                log(
+                    "Device Registered"
+                );
+            }
+        );
+
+        device.on(
+            "unregistered",
+            () => {
+
+                log(
+                    "Device Unregistered"
+                );
+            }
+        );
+
+        device.on(
+            "incoming",
+            call => {
+
+                activeCall = call;
+
+                document
+                    .getElementById(
+                        "incomingNumber"
+                    )
+                    .innerText =
+                        call.parameters.From ||
+                        "Unknown";
+
+                document
+                    .getElementById(
+                        "incomingBox"
+                    )
+                    .style.display =
+                        "block";
+
+                log(
+                    "Incoming Call",
+                    call.parameters
+                );
+
+                attachCallEvents(call);
+            }
+        );
+
+        device.on(
+            "error",
+            error => {
+
+                log(
+                    "Device Error",
+                    {
+                        code:error.code,
+                        message:error.message
+                    }
+                );
+            }
+        );
+
+        await device.register();
+
+    }
+    catch(error){
+
+        console.error(error);
+
+        setStatus(
+            "Initialization Failed"
+        );
+
+        log(
+            "Initialization Error",
+            error
+        );
+    }
+}
+
+async function makeCall(){
+
+    try{
+
+        const phone =
+            document
+                .getElementById(
+                    "phoneNumber"
+                )
+                .value;
+
+        if(!phone){
+
+            alert(
+                "Enter phone number"
+            );
+
+            return;
+        }
+
+        setStatus(
+            "Calling..."
+        );
+
+        activeCall =
+            await device.connect({
+                params:{
+                    phone:phone
+                }
+            });
+
+        attachCallEvents(
+            activeCall
+        );
+
+        log(
+            "Calling",
+            phone
+        );
+    }
+    catch(error){
+
+        log(
+            "Call Failed",
+            error
+        );
+
+        setStatus(
+            "Call Failed"
+        );
+    }
+}
+
+function acceptCall(){
+
+    if(activeCall){
+
+        activeCall.accept();
+
+        log(
+            "Call Accepted"
+        );
+    }
+
+    document
+        .getElementById(
+            "incomingBox"
+        )
+        .style.display =
+            "none";
+}
+
+function rejectCall(){
+
+    if(activeCall){
+
+        activeCall.reject();
+
+        log(
+            "Call Rejected"
+        );
+    }
+
+    document
+        .getElementById(
+            "incomingBox"
+        )
+        .style.display =
+            "none";
+}
+
+function hangupCall(){
+
+    if(activeCall){
+
+        activeCall.disconnect();
+
+        log(
+            "Call Disconnected"
+        );
+    }
+}
+
+function attachCallEvents(call){
+
+    call.on(
+        "accept",
+        () => {
+
+            setStatus(
+                "Connected"
+            );
+
+            log(
+                "Call Connected"
+            );
+        }
+    );
+
+    call.on(
+        "disconnect",
+        () => {
+
+            setStatus(
+                "Ready"
+            );
+
+            log(
+                "Call Ended"
+            );
+
+            activeCall = null;
+        }
+    );
+
+    call.on(
+        "cancel",
+        () => {
+
+            setStatus(
+                "Ready"
+            );
+
+            log(
+                "Call Cancelled"
+            );
+        }
+    );
+
+    call.on(
+        "reject",
+        () => {
+
+            setStatus(
+                "Ready"
+            );
+
+            log(
+                "Call Rejected"
+            );
+        }
+    );
+
+    call.on(
+        "error",
+        error => {
+
+            log(
+                "Call Error",
+                {
+                    code:error.code,
+                    message:error.message
+                }
+            );
+        }
+    );
+
+    call.on(
+        "warning",
+        warning => {
+
+            log(
+                "Call Warning",
+                warning
+            );
+        }
+    );
+}
+
+initialize();
+
+</script>
+
+</body>
+</html>

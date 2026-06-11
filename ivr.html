@@ -161,7 +161,60 @@ button {
 let device;
 let activeCall;
 console.log(Twilio.Device.version);
+
 async function initializePhone() {
+
+    try {
+
+        // Explicitly request mic permission
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true
+        });
+
+        console.log("Microphone granted");
+
+        const devices =
+            await navigator.mediaDevices.enumerateDevices();
+
+        console.table(devices);
+
+        const response =
+            await fetch('https://api.dev.rpmfy.com/crm-service/api/twilio/token');
+
+        const data = await response.json();
+
+        device = new Twilio.Device(data.token, {
+            logLevel: 1,
+            codecPreferences: ['pcmu']
+        });
+
+        device.on('registered', () => {
+            console.log('Device registered');
+        });
+
+        device.on('error', (error) => {
+            console.error('Device Error', error);
+        });
+
+        device.on('incoming', (call) => {
+            console.log('Incoming Call');
+            activeCall = call;
+        });
+
+        await device.register();
+
+    } catch (error) {
+
+        console.error(error);
+
+        alert(
+            'Microphone permission or device initialization failed'
+        );
+    }
+}
+
+
+async function initializePhone_old() {
 
    // try {
 

@@ -258,6 +258,8 @@ async function initialize(){
             new Twilio.Device(
                 data.token,
                 {
+                    edge: "singapore",
+                    codecPreferences: ["pcmu"],
                     logLevel:1,
                     codecPreferences:[
                         "pcmu"
